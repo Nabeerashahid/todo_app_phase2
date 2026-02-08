@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from pydantic import BaseModel
@@ -8,47 +9,50 @@ from datetime import datetime, timedelta
 app = FastAPI()
 security = HTTPBearer()
 
-# =====================
-# JWT CONFIG
-# =====================
+# ===== CORS =====
+origins = ["http://localhost:3000"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ===== JWT CONFIG =====
 SECRET_KEY = "super-secret-key-123"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# =====================
-# MODELS
-# =====================
+# ===== MODELS =====
 class Login(BaseModel):
     email: str
     password: str
 
-class Task(BaseModel):
-    id: Optional[int]
-    user_id: str
+class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = ""
     completed: bool = False
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
 
-# =====================
-# IN-MEMORY DB (testing)
-# =====================
+class Task(TaskCreate):
+    id: int
+    user_id: str
+    created_at: str
+    updated_at: str
+
+# ===== IN-MEMORY DB =====
 tasks_db = []
 task_counter = 1
 
-# =====================
-# FAKE USER (testing)
-# =====================
+# ===== FAKE USER =====
 fake_user = {
     "id": "user123",
     "email": "admin@gmail.com",
     "password": "1234",
 }
 
-# =====================
-# JWT FUNCTIONS
-# =====================
+# ===== JWT FUNCTIONS =====
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -66,9 +70,7 @@ def verify_jwt(credentials: HTTPAuthorizationCredentials = Depends(security)):
             detail="Invalid or expired token",
         )
 
-# =====================
-# LOGIN ROUTE
-# =====================
+# ===== LOGIN ROUTE =====
 @app.post("/api/login")
 def login(data: Login):
     if data.email == fake_user["email"] and data.password == fake_user["password"]:
@@ -76,10 +78,7 @@ def login(data: Login):
         return {"access_token": token, "token_type": "bearer"}
     raise HTTPException(status_code=401, detail="Invalid email or password")
 
-# =====================
-# TASK CRUD
-# =====================
-
+# ===== TASK CRUD =====
 @app.get("/api/{user_id}/tasks", response_model=List[Task])
 def get_tasks(user_id: str, user=Depends(verify_jwt)):
     if user_id != user.get("sub"):
@@ -87,20 +86,23 @@ def get_tasks(user_id: str, user=Depends(verify_jwt)):
     return [task for task in tasks_db if task["user_id"] == user_id]
 
 @app.post("/api/{user_id}/tasks", response_model=Task)
-def create_task(user_id: str, task: Task, user=Depends(verify_jwt)):
+def create_task(user_id: str, task: TaskCreate, user=Depends(verify_jwt)):
     global task_counter
     if user_id != user.get("sub"):
         raise HTTPException(status_code=403, detail="Forbidden")
-    task.id = task_counter
-    task.created_at = datetime.utcnow().isoformat()
-    task.updated_at = datetime.utcnow().isoformat()
+
+    task_dict = task.dict()
+    task_dict["id"] = task_counter
+    task_dict["user_id"] = user_id
+    task_dict["created_at"] = datetime.utcnow().isoformat()
+    task_dict["updated_at"] = datetime.utcnow().isoformat()
     task_counter += 1
-    task.user_id = user_id
-    tasks_db.append(task.dict())
-    return task
+
+    tasks_db.append(task_dict)
+    return task_dict
 
 @app.put("/api/{user_id}/tasks/{task_id}", response_model=Task)
-def update_task(user_id: str, task_id: int, updated_task: Task, user=Depends(verify_jwt)):
+def update_task(user_id: str, task_id: int, updated_task: TaskCreate, user=Depends(verify_jwt)):
     if user_id != user.get("sub"):
         raise HTTPException(status_code=403, detail="Forbidden")
     for task in tasks_db:
